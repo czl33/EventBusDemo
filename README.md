@@ -279,10 +279,147 @@ public class TwoActivity extends BaseActivity {
 ```
 源码见：https://github.com/czl33/EventBusDemo
 
-EventBus设计图：
+
+--------------------
+## 4.源码分析
+浅谈源码：
+
+1.首先大致看下张设计图：
+
 
 ![](https://img-blog.csdnimg.cn/20181215135411964.jpg?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzM0OTAyNTIy,size_16,color_FFFFFF,t_70)
-## 4.源码分析
+
+下面是我总结的事件分发机制：
+
+--------------------------------------------------------
+```java
+//获取实例方法，跟进去看一下
+EventBus.getDefault().register(MainActivity.this);
+
+//一个单例模式 双重非空校验锁，来保证各个地方获取的实例为同一个
+public static EventBus getDefault() {
+    if (defaultInstance == null) {
+        synchronized (EventBus.class) {
+            if (defaultInstance == null) {
+                defaultInstance = new EventBus();
+            }
+        }
+    }
+    return defaultInstance;
+}
+
+//构造方法：EventBus的构造方式是通过Builder建造者模式实现的
+public EventBus() {
+    this(DEFAULT_BUILDER);
+}
+
+EventBus(EventBusBuilder builder) {
+    logger = builder.getLogger();
+    //private final Map<Class<?>, CopyOnWriteArrayList<Subscription>>subscriptionsByEventType;
+    //这是一个Map容器，key的类型是Class对象，value 是list容器
+    subscriptionsByEventType = new HashMap<>();
+    typesBySubscriber = new HashMap<>();
+    //粘性事件
+    stickyEvents = new ConcurrentHashMap<>();
+    mainThreadSupport = builder.getMainThreadSupport();
+    //主线程发送者
+    mainThreadPoster = mainThreadSupport != null ? mainThreadSupport.createPoster(this) : null;
+    //联系到子线程发送
+    backgroundPoster = new BackgroundPoster(this);
+    /子线程发送
+    asyncPoster = new AsyncPoster(this);
+    indexCount = builder.subscriberInfoIndexes != null ? builder.subscriberInfoIndexes.size() : 0;
+    subscriberMethodFinder = new SubscriberMethodFinder(builder.subscriberInfoIndexes,
+            builder.strictMethodVerification, builder.ignoreGeneratedIndex);
+    logSubscriberExceptions = builder.logSubscriberExceptions;
+    logNoSubscriberMessages = builder.logNoSubscriberMessages;
+    sendSubscriberExceptionEvent = builder.sendSubscriberExceptionEvent;
+    sendNoSubscriberEvent = builder.sendNoSubscriberEvent;
+    throwSubscriberException = builder.throwSubscriberException;
+    eventInheritance = builder.eventInheritance;
+    executorService = builder.executorService;
+}
+
+
+//注册事件：这干的事情就是通过findSubscriberMethods找到类中来找到加了Subscriber注解，接收事件的方法的集合，
+//方法找到订阅方法集合后，还需要对每个订阅方法进行一个subscribe方法操作。
+public void register(Object subscriber) {
+    Class<?> subscriberClass = subscriber.getClass();
+    List<SubscriberMethod> subscriberMethods = subscriberMethodFinder.findSubscriberMethods(subscriberClass);
+    synchronized (this) {
+        for (SubscriberMethod subscriberMethod : subscriberMethods) {
+            subscribe(subscriber, subscriberMethod);
+        }
+    }
+}
+
+
+//这边较为重要 对每个订阅方法都会进行对象的关联
+
+
+private void subscribe(Object subscriber, SubscriberMethod subscriberMethod) {
+    //获取订阅方法的参数类型
+    Class<?> eventType = subscriberMethod.eventType;
+    //根据订阅的事件类型获取所有的订阅者
+    Subscription newSubscription = new Subscription(subscriber, subscriberMethod);
+    //将订阅者添加到subscriptionsByEventType集合中
+    CopyOnWriteArrayList<Subscription> subscriptions = subscriptionsByEventType.get(eventType);
+    if (subscriptions == null) {
+        //建立一个ArrayList存放方法
+        subscriptions = new CopyOnWriteArrayList<>();
+        subscriptionsByEventType.put(eventType, subscriptions);
+    } else {
+        if (subscriptions.contains(newSubscription)) {
+            throw new EventBusException("Subscriber " + subscriber.getClass() + " already registered to event "
+                    + eventType);
+        }
+    }
+     //根据优先级，将订阅者插入到指定的位置
+    int size = subscriptions.size();
+    for (int i = 0; i <= size; i++) {
+        if (i == size || subscriberMethod.priority > subscriptions.get(i).subscriberMethod.priority) {
+            subscriptions.add(i, newSubscription);
+            break;
+        }
+    }
+    //获取订阅者所有订阅的事件类型
+    List<Class<?>> subscribedEvents = typesBySubscriber.get(subscriber);
+    if (subscribedEvents == null) {
+        subscribedEvents = new ArrayList<>();
+        typesBySubscriber.put(subscriber, subscribedEvents);
+    }
+    //将该事件类型添加到typesBySubscriber中
+    subscribedEvents.add(eventType);
+
+    if (subscriberMethod.sticky) {
+        if (eventInheritance) {
+            // Existing sticky events of all subclasses of eventType have to be considered.
+            // Note: Iterating over all events may be inefficient with lots of sticky events,
+            // thus data structure should be changed to allow a more efficient lookup
+            // (e.g. an additional map storing sub classes of super classes: Class -> List<Class>).
+            Set<Map.Entry<Class<?>, Object>> entries = stickyEvents.entrySet();
+            for (Map.Entry<Class<?>, Object> entry : entries) {
+                Class<?> candidateEventType = entry.getKey();
+                if (eventType.isAssignableFrom(candidateEventType)) {
+                    Object stickyEvent = entry.getValue();
+                    checkPostStickyEventToSubscription(newSubscription, stickyEvent);
+                }
+            }
+        } else {
+            Object stickyEvent = stickyEvents.get(eventType);
+            checkPostStickyEventToSubscription(newSubscription, stickyEvent);
+        }
+    }
+}
+
+事件分发机制简单总结下：
+1、首先获取当前线程的PostingThreadState对象从而获取到当前线程的事件队列
+
+2、通过事件类型获取到所有订阅者集合
+
+3、通过反射执行订阅者中的订阅方法
+```
+
 
 
 ## 5.参考
