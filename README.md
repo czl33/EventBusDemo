@@ -282,8 +282,8 @@ public class TwoActivity extends BaseActivity {
 EventBus设计图：
 
 ![](https://img-blog.csdnimg.cn/20181215135411964.jpg?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzM0OTAyNTIy,size_16,color_FFFFFF,t_70)
+## 4.源码分析
 
 
-## 4..参考
+## 5.参考
 
-> 源码解析 ：https://blog.csdn.net/qq_34902522/article/details/85013185
